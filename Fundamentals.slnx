@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="CSharpBasics/CSharpBasics.csproj" />
+  <Project Path="DotNetProjectBasics/DotNetProjectBasics.csproj" />
+  <Project Path="PersonalDetailsApi/PersonalDetailsApi.csproj" />
+  <Project Path="SharedLibrary/SharedLibrary.csproj" />
+</Solution>

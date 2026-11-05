@@ -1,0 +1,78 @@
+@baseUrl = http://localhost:5056
+@api = {{baseUrl}}/api/v1/persons
+
+### Health
+GET {{baseUrl}}/health
+
+### List (paged, sorted)
+GET {{api}}?page=1&pageSize=10&sortBy=LastName&sortDirection=Asc
+
+### Search + filters
+GET {{api}}?search=men&gender=Male&city=Kochi&minAge=25&maxAge=40
+
+### Statistics
+GET {{api}}/statistics
+
+### Create
+# @name create
+POST {{api}}
+Content-Type: application/json
+
+{
+  "firstName": "Meera",
+  "lastName": "Nair",
+  "dateOfBirth": "1995-02-14",
+  "placeOfBirth": "Chennai",
+  "gender": "Female",
+  "maritalStatus": "Single",
+  "bloodGroup": "ABPositive",
+  "nationality": "Indian",
+  "email": "meera.nair@example.com",
+  "primaryPhone": "+91 90000 11111",
+  "languages": ["English", "Tamil"],
+  "addresses": [
+    { "type": "Home", "line1": "7 Beach Road", "city": "Chennai", "state": "Tamil Nadu", "postalCode": "600001", "country": "India", "isPrimary": true }
+  ],
+  "emergencyContacts": [
+    { "name": "Ravi Nair", "relationship": "Parent", "phone": "+91 90000 22222" }
+  ],
+  "educations": [
+    { "level": "Bachelor", "institution": "Anna University", "fieldOfStudy": "Electronics", "startYear": 2013, "endYear": 2017 }
+  ],
+  "employments": [
+    { "employer": "Contoso", "jobTitle": "QA Engineer", "employmentType": "FullTime", "startDate": "2017-07-01" }
+  ],
+  "identityDocuments": [
+    { "documentType": "Passport", "documentNumber": "N7654321", "issuingCountry": "India", "issueDate": "2019-05-01", "expiryDate": "2029-04-30" }
+  ]
+}
+
+### Get by id
+GET {{api}}/{{create.response.body.$.id}}
+
+### Replace
+PUT {{api}}/{{create.response.body.$.id}}
+Content-Type: application/json
+
+{
+  "firstName": "Meera",
+  "lastName": "Nair",
+  "dateOfBirth": "1995-02-14",
+  "gender": "Female",
+  "maritalStatus": "Married",
+  "nationality": "Indian",
+  "email": "meera.nair@example.com",
+  "primaryPhone": "+91 90000 11111",
+  "addresses": [
+    { "type": "Home", "line1": "9 New Street", "city": "Kochi", "postalCode": "682001", "country": "India" }
+  ]
+}
+
+### Delete (soft)
+DELETE {{api}}/{{create.response.body.$.id}}
+
+### Validation error example (400)
+POST {{api}}
+Content-Type: application/json
+
+{ "firstName": "", "lastName": "X", "dateOfBirth": "2090-01-01", "gender": "Male", "nationality": "X", "email": "not-an-email", "primaryPhone": "abc" }
