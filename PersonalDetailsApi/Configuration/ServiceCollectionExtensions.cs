@@ -39,6 +39,23 @@ public static class ServiceCollectionExtensions
         return services;
     }
 
+    /// <summary>
+    /// Lets a browser app on another origin (e.g. the React frontend on http://localhost:5173) call this API.
+    /// Allowed origins come from the "Cors:AllowedOrigins" setting; when the list is empty no origin is allowed.
+    /// Not needed when the frontend uses the Vite dev proxy, because the browser then sees one origin only.
+    /// </summary>
+    public static IServiceCollection AddFrontendCors(this IServiceCollection services, IConfiguration configuration)
+    {
+        var origins = configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+
+        services.AddCors(options => options.AddDefaultPolicy(policy => policy
+            .WithOrigins(origins)
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .WithExposedHeaders("Location")));   // so the client can read the URL of a created person
+        return services;
+    }
+
     public static IServiceCollection AddApiDocumentation(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<ApiDocumentationOptions>()

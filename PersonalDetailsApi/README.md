@@ -18,6 +18,18 @@ Then open **http://localhost:5056**. Swagger UI is served at the root.
 - Health check: `GET /health`
 - Ready-made requests: [PersonalDetailsApi.http](PersonalDetailsApi.http) (VS Code REST Client / Visual Studio)
 
+## Frontend
+
+A React + Vite app for this API lives in [../PersonalDetailsWeb](../PersonalDetailsWeb/README.md). With the API running:
+
+```powershell
+cd PersonalDetailsWeb
+npm install   # first time only (needs Node 20.19+ / 22.12+)
+npm run dev   # http://localhost:5173
+```
+
+The Vite dev server proxies `/api` to `http://localhost:5056`, so no CORS set-up is needed. If the frontend calls the API on another origin instead, add that origin to `Cors:AllowedOrigins` in `appsettings*.json`. Development already allows `http://localhost:5173`. See [section 11 of the guide](docs/PROJECT_GUIDE.md#11-the-react-frontend).
+
 ## Endpoints
 
 | Method | Route | Description |

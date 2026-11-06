@@ -14,16 +14,23 @@ This guide explains how the project is organised, what each file does, and how a
 8. [Configuration and environments](#8-configuration-and-environments)
 9. [Database and migrations](#9-database-and-migrations)
 10. [How to add a new feature](#10-how-to-add-a-new-feature)
-11. [Suggested reading order](#11-suggested-reading-order)
-12. [Glossary](#12-glossary)
+11. [The React frontend](#11-the-react-frontend)
+12. [Running the full stack](#12-running-the-full-stack)
+13. [Suggested reading order](#13-suggested-reading-order)
+14. [Glossary](#14-glossary)
 
 ---
 
 ## 1. The big picture
 
-The project is a **layered** Web API. Each layer has one job and only talks to the layer directly below it.
+The project is a **layered** Web API with a **React single-page app** in front of it. Each layer has one job and only talks to the layer directly below it.
 
 ```
+┌───────────────────────────────────────┐
+│ Browser  PersonalDetailsWeb (React)   │  Pages, forms, charts. Calls the API with fetch().
+└───────────────────┬───────────────────┘
+                    │ /api/v1/persons...  (Vite dev server on :5173 proxies to :5056)
+                    ▼
             HTTP request (JSON)
                     │
                     ▼
@@ -49,6 +56,8 @@ The project is a **layered** Web API. Each layer has one job and only talks to t
 ```
 
 Code that every layer uses (exceptions, validation attributes, helper extensions) lives in `Common/`. Start-up wiring lives in `Configuration/` and `Program.cs`.
+
+The frontend lives in a separate folder, [`PersonalDetailsWeb/`](../../PersonalDetailsWeb/), next to the API. It knows nothing about C#, EF Core or SQLite. Its only contract with the backend is the HTTP API: the JSON shapes in `Contracts/` and the ProblemDetails error format. See [section 11](#11-the-react-frontend).
 
 ### Why split it like this?
 
@@ -228,7 +237,7 @@ The mapping is written by hand rather than with a library like AutoMapper, so ev
 
 | File | Purpose |
 |---|---|
-| [ServiceCollectionExtensions.cs](../Configuration/ServiceCollectionExtensions.cs) | `AddPersistence`, `AddApplicationServices` and `AddApiDocumentation` register services. `UseApiDocumentation` adds Swagger to the pipeline. Keeps `Program.cs` short. |
+| [ServiceCollectionExtensions.cs](../Configuration/ServiceCollectionExtensions.cs) | `AddPersistence`, `AddApplicationServices`, `AddFrontendCors` and `AddApiDocumentation` register services. `UseApiDocumentation` adds Swagger to the pipeline. Keeps `Program.cs` short. |
 | [ApiDocumentationOptions.cs](../Configuration/ApiDocumentationOptions.cs) | Strongly typed settings class bound to the `ApiDocumentation` section (**options pattern**), validated at start-up. |
 
 Service lifetimes registered here:
@@ -252,6 +261,7 @@ Program.cs
       reads appsettings.json → appsettings.{Environment}.json → environment variables → command line
  2. builder.Services.AddPersistence(...)        → registers AppDbContext with the SQLite connection string
                     .AddApplicationServices()   → repository, service, TimeProvider, exception handler, health checks
+                    .AddFrontendCors(...)       → CORS policy from Cors:AllowedOrigins
                     .AddApiDocumentation(...)   → options + SwaggerGen
     builder.Services.AddControllers().AddJsonOptions(...)  → enums as strings, omit nulls
  3. builder.Build()                             → DI container is now locked
@@ -259,6 +269,7 @@ Program.cs
  5. Middleware pipeline (runs in this order for every request):
       UseExceptionHandler  → catches errors from everything after it
       UseStatusCodePages   → gives empty 4xx/5xx responses a ProblemDetails body
+      UseCors              → answers preflight requests and adds Access-Control-* headers for allowed origins
       UseApiDocumentation  → serves /swagger/v1/swagger.json and the UI at /
       MapControllers       → routes /api/v1/persons/... to PersonsController
       MapHealthChecks      → /health checks that the database is reachable
@@ -403,6 +414,7 @@ appsettings.json  →  appsettings.{Environment}.json  →  environment variable
 |---|---|---|---|
 | `ConnectionStrings:PersonalDetails` | `Data Source=personal-details.db` | — | SQLite file path |
 | `Database:SeedSampleData` | `false` | `true` | Insert three sample persons if the table is empty |
+| `Cors:AllowedOrigins` | `[]` (none) | `["http://localhost:5173"]` | Browser origins allowed to call the API directly. Not needed when the React app uses the Vite proxy (see [section 11](#11-the-react-frontend)) |
 | `ApiDocumentation:Enabled` | `false` | `true` | Serve Swagger (off by default for production) |
 | `ApiDocumentation:Title`, `Description`, ... | set | — | Text shown in Swagger |
 | `Logging:LogLevel:Microsoft.EntityFrameworkCore.Database.Command` | `Warning` | `Information` | `Information` prints every SQL statement, which is useful for learning |
@@ -474,9 +486,136 @@ The controller and service need **no changes**, because they work with the whole
 
 For a **new top-level resource** (for example "Departments"), you'd add an entity, a configuration, a `DbSet`, a migration, DTOs, a mapping, an `I…Repository` (inheriting `IRepository<T>`), an `I…Service`, a controller, and two `AddScoped` lines in `AddApplicationServices`.
 
+**To show Skills in the frontend** as well, three more steps follow the backend checklist:
+
+| # | File | Change |
+|---|---|---|
+| 12 | `PersonalDetailsWeb/src/api/types.ts` | Add `PROFICIENCIES`, `SkillRequest`, `SkillResponse`, and `skills` on `PersonRequest` / `PersonDetailResponse` |
+| 13 | `PersonalDetailsWeb/src/pages/PersonFormPage.tsx` | A `SkillForm` type, a `blank.skill()` factory, the two conversions in `fromResponse` / `toRequest`, and one more `<ListEditor>` |
+| 14 | `PersonalDetailsWeb/src/pages/PersonDetailPage.tsx` | One more `<Section title="Skills">` |
+
 ---
 
-## 11. Suggested reading order
+## 11. The React frontend
+
+[`PersonalDetailsWeb/`](../../PersonalDetailsWeb/) is a **React 19 + TypeScript** single-page app built with **Vite**. It covers everything the API can do: search and filter, view, create, edit, delete and statistics.
+
+### 11.1 How the browser reaches the API
+
+In development, two servers run side by side:
+
+```
+Browser ──► http://localhost:5173  (Vite dev server: serves the React app, hot reload)
+                 │
+                 │  any path starting with /api or /health is forwarded (proxy)
+                 ▼
+            http://localhost:5056  (ASP.NET Core: PersonalDetailsApi)
+```
+
+The proxy is configured in [vite.config.ts](../../PersonalDetailsWeb/vite.config.ts). The React code calls **relative** URLs such as `/api/v1/persons`, so the browser only ever sees one origin (`localhost:5173`). That means:
+
+- **No CORS is needed** in development. The browser never makes a cross-origin request.
+- The API doesn't need to know the frontend exists.
+
+**CORS** only matters if the browser calls the API on a different origin. That happens when you set `VITE_API_BASE_URL=http://localhost:5056` in `PersonalDetailsWeb/.env.local`, or when the two are hosted on different domains. Then the API must list the frontend's origin in `Cors:AllowedOrigins`. `AddFrontendCors` reads that setting, and `app.UseCors()` applies the policy. The policy also exposes the `Location` header, so a script can read where a newly created person lives.
+
+### 11.2 Folder tour
+
+```
+PersonalDetailsWeb/
+├── index.html              The single HTML page; loads src/main.tsx
+├── vite.config.ts          Dev server port (5173) and the /api proxy
+├── package.json            npm scripts (dev, build, preview) and dependencies
+├── tsconfig.json           TypeScript compiler options (strict mode)
+└── src/
+    ├── main.tsx            Entry point: mounts <App /> inside a <BrowserRouter>
+    ├── App.tsx             App shell (sidebar navigation) and the client-side routes
+    ├── index.css           All styles: colour tokens with a dark-mode variant, responsive layout
+    ├── api/
+    │   ├── types.ts        TypeScript copies of the C# DTOs and enums in Contracts/ and Domain/Enums
+    │   ├── client.ts       fetch wrapper: JSON in/out, ProblemDetails → ApiError, AbortSignal
+    │   └── persons.ts      One function per PersonsController endpoint
+    ├── hooks/useApi.ts     Load data on mount / when inputs change; aborts stale requests
+    ├── components/         Reusable UI: Icon (inline SVG icons), Avatar (coloured initials), Toast
+    │                       (confirmation messages), Skeleton (loading placeholders), ErrorMessage,
+    │                       Pagination, BarList (bar chart in plain CSS)
+    ├── pages/
+    │   ├── PersonListPage.tsx    GET /persons with filters, sort and paging (state kept in the URL)
+    │   ├── PersonDetailPage.tsx  GET /persons/{id}, plus DELETE
+    │   ├── PersonFormPage.tsx    POST (new) and PUT (edit), including all five child lists
+    │   └── StatisticsPage.tsx    GET /persons/statistics
+    └── utils/format.ts     Enum labels ("APositive" → "A+") and date formatting
+```
+
+| Route | Page | API call |
+|---|---|---|
+| `/` | `PersonListPage` | `GET /api/v1/persons?search=…&page=…` |
+| `/persons/new` | `PersonFormPage` | `POST /api/v1/persons` |
+| `/persons/:id` | `PersonDetailPage` | `GET /api/v1/persons/{id}`, `DELETE /api/v1/persons/{id}` |
+| `/persons/:id/edit` | `PersonFormPage` | `GET` then `PUT /api/v1/persons/{id}` |
+| `/statistics` | `StatisticsPage` | `GET /api/v1/persons/statistics` |
+
+### 11.3 How the frontend mirrors the backend
+
+| Backend idea | Frontend counterpart |
+|---|---|
+| DTO records in `Contracts/` | Interfaces in `src/api/types.ts`. Property names are camelCase because that is how ASP.NET Core serialises JSON. Nullable C# properties are optional (`?`) because the API omits nulls. |
+| Enums serialised as strings (`JsonStringEnumConverter`) | String union types built from `as const` arrays, e.g. `GENDERS`. The same arrays fill the `<select>` options. |
+| `CancellationToken ct` on every action | `AbortController` in `useApi`. When you leave a page or change a filter, the old request is aborted, and ASP.NET Core sees the token cancelled. |
+| `PagedResult<T>` with `TotalPages`, `HasNextPage` | `Pagination` uses those computed fields directly. Nothing is recalculated in the browser. |
+| ProblemDetails from `GlobalExceptionHandler` | `ApiError` in `client.ts` carries the parsed body. `ErrorMessage` shows `title`, `detail` and `traceId`. |
+| Validation errors keyed by path (`Addresses[0].City`) | `PersonFormPage` lower-cases the keys and shows each message under its field. The form uses `noValidate` on purpose, so you see the **server's** validation from [section 6](#6-validation-three-layers) in action. |
+| 409 duplicate e-mail (`ConflictException`) | Shown under the e-mail field. |
+| PUT is a full replacement | The edit form sends the whole person, including every child list, every time. |
+| Document numbers are masked in responses | When editing, document numbers can't be pre-filled (the browser only gets `****1234`), so the form asks you to re-enter them. This is a real trade-off of masking plus full-replacement PUT. |
+
+### 11.4 Following one request from the browser
+
+Example: clicking **Create person** on `/persons/new`.
+
+| Step | Where | What happens |
+|---|---|---|
+| 1 | `PersonFormPage.handleSubmit` | `toRequest(form)` turns the form's strings into a `PersonRequest`: blank optional fields become `null`, years become numbers, and languages are split on commas. |
+| 2 | `personsApi.create` → `request()` | `fetch('/api/v1/persons', { method: 'POST', body: JSON })` |
+| 3 | Vite proxy | Forwards the request to `http://localhost:5056/api/v1/persons`. |
+| 4 | API | Runs the same steps as [section 4](#4-following-one-request-end-to-end). |
+| 5a | Success (201) | The response body is the new `PersonDetailResponse`. The page navigates to `/persons/{id}`. |
+| 5b | Failure (400 / 409) | `request()` throws `ApiError`. The form puts each message under its field and lists them all at the top. |
+
+### 11.5 Tooling notes
+
+- **Node.js 20.19+ or 22.12+** is required by Vite 7. Check with `node -v`. With nvm for Windows: `nvm use 22.22.2`.
+- `npm run build` type-checks with `tsc` first, so a mismatch between `types.ts` and how a page uses it fails the build.
+- `npm run build` writes static files to `dist/`. `npm run preview` serves them on port 4173, with the same proxy.
+
+---
+
+## 12. Running the full stack
+
+Open two terminals from the repository root:
+
+```powershell
+# Terminal 1: API on http://localhost:5056 (Swagger UI at the root)
+dotnet run --project PersonalDetailsApi --launch-profile http
+
+# Terminal 2: React app on http://localhost:5173
+cd PersonalDetailsWeb
+npm install        # first time only
+npm run dev
+```
+
+Open **http://localhost:5173**. The three seeded sample persons appear in the list.
+
+| Symptom | Cause / fix |
+|---|---|
+| "Could not reach the API" or 502/504 errors in the browser | The API isn't running, or it's on a different port. Start terminal 1 and check that it listens on 5056. |
+| CORS error in the browser console | `VITE_API_BASE_URL` is set, so the browser calls the API directly. Add the frontend's origin to `Cors:AllowedOrigins`, or remove the variable to go back to the proxy. |
+| `npm run dev` fails with a syntax or engine error | Node is too old. Switch to Node 22 (`nvm use 22.22.2`). |
+| Port 5173 already in use | Another Vite app is running. `strictPort` makes Vite stop instead of silently picking another port, because the CORS origin depends on the port. |
+
+---
+
+## 13. Suggested reading order
 
 If you are new to the code, read the files in this order. Each one builds on the previous.
 
@@ -490,12 +629,13 @@ If you are new to the code, read the files in this order. Each one builds on the
 8. [Repositories/Repository.cs](../Repositories/Repository.cs) → [PersonRepository.cs](../Repositories/PersonRepository.cs): queries
 9. [Data/AppDbContext.cs](../Data/AppDbContext.cs) → [Configurations/](../Data/Configurations/): persistence
 10. [Common/Errors/GlobalExceptionHandler.cs](../Common/Errors/GlobalExceptionHandler.cs): error handling
+11. Frontend: [src/api/types.ts](../../PersonalDetailsWeb/src/api/types.ts) → [src/api/client.ts](../../PersonalDetailsWeb/src/api/client.ts) → [src/pages/PersonListPage.tsx](../../PersonalDetailsWeb/src/pages/PersonListPage.tsx) → [src/pages/PersonFormPage.tsx](../../PersonalDetailsWeb/src/pages/PersonFormPage.tsx)
 
-**Hands-on tip:** run the app in Development, then send requests from [PersonalDetailsApi.http](../PersonalDetailsApi.http) or Swagger and watch the console. Each SQL statement EF generates is logged, so you can see the LINQ in `PersonRepository` turn into SQL.
+**Hands-on tip:** run the API in Development, then send requests from [PersonalDetailsApi.http](../PersonalDetailsApi.http), Swagger, or the React app, and watch the API console. Each SQL statement EF generates is logged, so you can see the LINQ in `PersonRepository` turn into SQL. Typing in the list page's filters and pressing **Apply** shows how each filter adds a `WHERE` clause.
 
 ---
 
-## 12. Glossary
+## 14. Glossary
 
 | Term | Meaning here |
 |---|---|
@@ -515,3 +655,9 @@ If you are new to the code, read the files in this order. Each one builds on the
 | **Options pattern** | Binding a configuration section to a typed class (`ApiDocumentationOptions`). |
 | **Deferred execution** | A LINQ query only runs when its results are enumerated (`ToListAsync`, `CountAsync`). |
 | **Projection** | Selecting only the needed columns into a new shape (`Select(p => new PersonStatRow(...))`). |
+| **SPA** | Single-page application: one HTML page whose content is redrawn by JavaScript (React) as you navigate. |
+| **Vite** | The frontend build tool and dev server. It serves the source with hot reload and bundles it for production. |
+| **Dev proxy** | The Vite dev server forwarding `/api/...` requests to the ASP.NET Core app, so both appear to the browser as one origin. |
+| **CORS** | Cross-Origin Resource Sharing: browser rules that block a page on one origin from reading responses from another, unless the server allows it. |
+| **Origin** | Scheme + host + port, e.g. `http://localhost:5173`. Different port means different origin. |
+| **AbortController** | Browser API for cancelling a `fetch`; the client-side counterpart of a `CancellationToken`. |

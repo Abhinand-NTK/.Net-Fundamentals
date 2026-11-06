@@ -8,6 +8,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services
     .AddPersistence(builder.Configuration)
     .AddApplicationServices()
+    .AddFrontendCors(builder.Configuration)
     .AddApiDocumentation(builder.Configuration);
 
 builder.Services
@@ -27,6 +28,7 @@ await app.InitializeDatabaseAsync();
 // ---------------- 3. Configure the HTTP pipeline (order matters) ----------------
 app.UseExceptionHandler();
 app.UseStatusCodePages();
+app.UseCors();               // must run before the endpoints so preflight (OPTIONS) requests are answered
 app.UseApiDocumentation();
 
 app.MapControllers();
